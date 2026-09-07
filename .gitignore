@@ -1,0 +1,10 @@
+/dist/
+/bin/
+*.pem
+*.key
+*.log
+*.pid
+bridge.conf
+front.conf
+gost-out.conf
+.github/
