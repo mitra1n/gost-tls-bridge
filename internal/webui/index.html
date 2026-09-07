@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gost-tls-bridge</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --fg:#e6e9ef; --muted:#98a2b3; --accent:#4f9cf9; --accent2:#3b82f6;
+    --up:#22c55e; --down:#ef4444; --warn:#f59e0b; --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  @media (prefers-color-scheme: light){
+    :root{--bg:#f4f6fa;--panel:#fff;--panel2:#f0f2f6;--line:#e2e6ee;--fg:#141a24;--muted:#5b6472;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+  .wrap{max-width:820px;margin:0 auto;padding:24px 18px 48px}
+  h1{font-size:20px;margin:0 0 2px;display:flex;align-items:center;gap:10px}
+  .sub{color:var(--muted);font-size:13px;margin:0 0 20px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .card h2{font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 12px;font-weight:600}
+  .legs{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media (max-width:560px){.legs{grid-template-columns:1fr}}
+  .leg{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .leg .name{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .row{display:flex;align-items:center;gap:8px;margin:4px 0;font-size:13px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--down);flex:none}
+  .dot.up{background:var(--up)} .dot.warn{background:var(--warn)}
+  .addr{font-family:var(--mono);color:var(--muted);font-size:12px}
+  .meta{display:flex;flex-wrap:wrap;gap:6px 18px;color:var(--muted);font-size:13px;margin-top:4px}
+  .meta b{color:var(--fg);font-weight:600}
+  .btns{display:flex;flex-wrap:wrap;gap:8px}
+  button{font:inherit;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--fg);
+    border-radius:9px;padding:9px 14px;transition:.12s}
+  button:hover{border-color:var(--accent)}
+  button:disabled{opacity:.5;cursor:default}
+  button.primary{background:var(--accent2);border-color:var(--accent2);color:#fff}
+  button.danger:hover{border-color:var(--down)}
+  pre{font-family:var(--mono);font-size:12.5px;white-space:pre-wrap;word-break:break-word;
+    background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin:0;max-height:340px;overflow:auto}
+  .toast{position:fixed;left:50%;bottom:22px;transform:translateX(-50%);background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;padding:10px 16px;box-shadow:0 8px 30px rgba(0,0,0,.35);
+    opacity:0;transition:.2s;pointer-events:none;max-width:90vw}
+  .toast.show{opacity:1}
+  .toast.err{border-color:var(--down)} .toast.ok{border-color:var(--up)}
+  .muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔐 gost-tls-bridge</h1>
+  <p class="sub">ГОСТ TLS MITM-мост для Burp — локальная панель управления</p>
+
+  <div class="card">
+    <h2>Состояние</h2>
+    <div class="meta" id="meta"><span class="muted">загрузка…</span></div>
+    <div class="legs" style="margin-top:12px">
+      <div class="leg">
+        <div class="name">GOST-плечо (наружу)</div>
+        <div class="row"><span class="dot" id="gost-proc"></span> процесс <span id="gost-proc-t" class="muted"></span></div>
+        <div class="row"><span class="dot" id="gost-port"></span> порт <span class="addr" id="gost-addr"></span></div>
+      </div>
+      <div class="leg">
+        <div class="name">Front-плечо (Burp → сюда)</div>
+        <div class="row"><span class="dot" id="front-proc"></span> процесс <span id="front-proc-t" class="muted"></span></div>
+        <div class="row"><span class="dot" id="front-port"></span> порт <span class="addr" id="front-addr"></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Управление</h2>
+    <div class="btns">
+      <button class="primary" onclick="act('start','Мост запущен')">▶ Start</button>
+      <button class="danger" onclick="act('stop','Мост остановлен')">■ Stop</button>
+      <button onclick="act('restart','Перезапущено')">⟳ Restart</button>
+      <button onclick="check()">✓ Check (сквозной)</button>
+      <button onclick="act('certgen','Relay-серт пересоздан')">🔑 Certgen</button>
+      <button onclick="loadBurp()">📋 Burp</button>
+      <button onclick="loadConfig()">⚙ Config</button>
+    </div>
+  </div>
+
+  <div class="card" id="out-card" hidden>
+    <h2 id="out-title">Вывод</h2>
+    <pre id="out"></pre>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let busy=false;
+
+function toast(msg,kind){
+  const t=$('toast'); t.textContent=msg; t.className='toast show '+(kind||'');
+  clearTimeout(t._t); t._t=setTimeout(()=>t.className='toast',2600);
+}
+function setDot(id,up,warn){
+  const d=$(id); d.className='dot'+(up?' up':(warn?' warn':''));
+}
+async function api(path,method){
+  const r=await fetch(path,{method:method||'GET'});
+  return r.json();
+}
+async function refresh(){
+  try{
+    const s=await api('/api/status');
+    if(!s.ok){ $('meta').innerHTML='<span class="err" style="color:var(--down)">'+(s.error||'ошибка')+'</span>'; return; }
+    $('meta').innerHTML=
+      'target: <b>'+s.target+'</b>'+
+      '<span>backend: <b>'+s.backend+'</b></span>'+
+      '<span>relay-серт: <b>'+(s.relay_found?'есть':'нет')+'</b></span>';
+    setDot('gost-proc',s.gost_proc); $('gost-proc-t').textContent=s.gost_proc?'up':'down';
+    setDot('gost-port',s.gost_port); $('gost-addr').textContent=s.gost_addr;
+    setDot('front-proc',s.front_proc); $('front-proc-t').textContent=s.front_proc?'up':'down';
+    setDot('front-port',s.front_port); $('front-addr').textContent=s.front_addr;
+  }catch(e){ $('meta').innerHTML='<span style="color:var(--down)">панель недоступна</span>'; }
+}
+async function act(name,okMsg){
+  if(busy)return; busy=true;
+  try{
+    const r=await api('/api/'+name,'POST');
+    if(r.ok) toast(okMsg,'ok'); else toast('Ошибка: '+r.error,'err');
+  }catch(e){ toast('Сбой запроса','err'); }
+  busy=false; refresh();
+}
+async function check(){
+  toast('Проверяю…');
+  const r=await api('/api/check','POST');
+  if(r.ok) toast('Сервер ответил: '+r.status,'ok');
+  else toast('Check не прошёл: '+r.error,'err');
+}
+function showOut(title,text){
+  $('out-title').textContent=title; $('out').textContent=text; $('out-card').hidden=false;
+  $('out-card').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+async function loadBurp(){ const r=await api('/api/burp'); r.ok?showOut('Настройка Burp',r.text):toast(r.error,'err'); }
+async function loadConfig(){ const r=await api('/api/config'); r.ok?showOut('Конфиг: '+r.path,r.text):toast(r.error,'err'); }
+
+refresh(); setInterval(refresh,4000);
+</script>
+</body>
+</html>

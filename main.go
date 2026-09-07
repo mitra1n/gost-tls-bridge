@@ -10,6 +10,8 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/mitra1n/gost-tls-bridge/internal/bridge"
 	"github.com/mitra1n/gost-tls-bridge/internal/cert"
 	"github.com/mitra1n/gost-tls-bridge/internal/config"
+	"github.com/mitra1n/gost-tls-bridge/internal/webui"
 )
 
 const usage = `gost-tls-bridge — ГОСТ TLS MITM-мост для Burp
@@ -33,6 +36,7 @@ Commands:
   status     показать состояние процессов и портов
   check      end-to-end проверка сквозь мост (HTTPS GET)
   burp       напечатать шаги настройки Burp
+  gui        локальная веб-панель управления (открывает браузер)
   render     только отрендерить stunnel-конфиги (без запуска)
   version    версия
 
@@ -60,6 +64,8 @@ func main() {
 	target := fs.String("target", "", "target host (init)")
 	port := fs.Int("port", 443, "target port (init)")
 	sni := fs.String("sni", "", "SNI override (init)")
+	addr := fs.String("addr", "127.0.0.1:8765", "listen address (gui)")
+	noOpen := fs.Bool("no-open", false, "do not open the browser (gui)")
 	_ = fs.Parse(rest)
 
 	resolvedCfgPath := func() string {
@@ -94,6 +100,8 @@ func main() {
 		mustOK(withConfig(resolvedCfgPath(), cmdCheck))
 	case "burp":
 		mustOK(withConfig(resolvedCfgPath(), cmdBurp))
+	case "gui":
+		mustOK(cmdGUI(resolvedCfgPath(), *addr, *noOpen))
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		fmt.Print(usage)
@@ -234,6 +242,24 @@ func cmdCheck(c *config.Config) error {
 func cmdBurp(c *config.Config) error {
 	fmt.Print(bridge.BurpHints(c))
 	return nil
+}
+
+func cmdGUI(cfgPath, addr string, noOpen bool) error {
+	// The panel loads the config per-request, so it is fine to start even
+	// before `init`; it will surface config errors in the UI.
+	srv := webui.New(cfgPath)
+	httpSrv := &http.Server{Addr: addr, Handler: srv.Handler()}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", addr, err)
+	}
+	url := "http://" + addr + "/"
+	fmt.Println("панель управления:", url, "(config:", cfgPath+")")
+	fmt.Println("Ctrl+C для остановки панели (мост продолжит работать).")
+	if !noOpen {
+		webui.OpenBrowser(url)
+	}
+	return httpSrv.Serve(ln)
 }
 
 func printStatus(c *config.Config) {

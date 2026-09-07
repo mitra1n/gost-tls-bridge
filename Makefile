@@ -2,7 +2,7 @@ BINARY := gost-tls-bridge
 VERSION := 0.1.0
 LDFLAGS := -s -w -X main.version=$(VERSION)
 
-.PHONY: build build-windows build-linux dist fmt vet test clean
+.PHONY: build build-windows build-linux dist release fmt vet test clean
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/$(BINARY) .
@@ -26,3 +26,21 @@ test:
 
 clean:
 	rm -rf bin dist
+
+# Reproducible multi-OS release artifacts under dist/.
+PLATFORMS := windows/amd64 windows/arm64 linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
+release:
+	@rm -rf dist && mkdir -p dist
+	@for pl in $(PLATFORMS); do \
+	  os=$${pl%/*}; arch=$${pl#*/}; \
+	  name=$(BINARY)-$(VERSION)-$$os-$$arch; \
+	  ext=; if [ "$$os" = "windows" ]; then ext=.exe; fi; \
+	  echo "building $$name"; \
+	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name/$(BINARY)$$ext . || exit 1; \
+	  cp README.md LICENSE bridge.example.conf dist/$$name/; \
+	  if [ "$$os" = "windows" ]; then (cd dist && zip -qr $$name.zip $$name); \
+	  else (cd dist && tar -czf $$name.tar.gz $$name); fi; \
+	  rm -rf dist/$$name; \
+	done
+	@cd dist && (sha256sum *.zip *.tar.gz 2>/dev/null > SHA256SUMS.txt || shasum -a 256 *.zip *.tar.gz > SHA256SUMS.txt)
+	@echo "--- dist ---" && ls -1 dist
