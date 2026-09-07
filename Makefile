@@ -37,7 +37,9 @@ release:
 	  ext=; if [ "$$os" = "windows" ]; then ext=.exe; fi; \
 	  echo "building $$name"; \
 	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "$(LDFLAGS)" -o dist/$$name/$(BINARY)$$ext . || exit 1; \
-	  cp README.md LICENSE bridge.example.conf dist/$$name/; \
+	  cp README.md LICENSE dist/$$name/; \
+	  if [ "$$os" = "windows" ]; then cp bridge.example.windows.conf dist/$$name/bridge.example.conf; \
+	  else cp bridge.example.unix.conf dist/$$name/bridge.example.conf; fi; \
 	  if [ "$$os" = "windows" ]; then (cd dist && zip -qr $$name.zip $$name); \
 	  else (cd dist && tar -czf $$name.tar.gz $$name); fi; \
 	  rm -rf dist/$$name; \
